@@ -448,6 +448,259 @@ function getHourlySales(params = {}) {
   return hourlyData;
 }
 
+function getProductsByCategory(params = {}) {
+  const { startDate, endDate, categoryId } = params;
+  const today = dayjs().format('YYYY-MM-DD');
+  const defaultStart = dayjs().subtract(30, 'day').format('YYYY-MM-DD');
+  
+  const start = startDate || defaultStart;
+  const end = endDate || today;
+  
+  if (!categoryId) {
+    throw new Error('categoryId is required');
+  }
+  
+  const sql = `SELECT 
+    p.id as product_id,
+    p.sku,
+    p.name as product_name,
+    c.id as category_id,
+    c.name as category_name,
+    COALESCE(SUM(oi.subtotal), 0) as sales_amount,
+    COALESCE(SUM(oi.quantity), 0) as quantity,
+    COALESCE(SUM(oi.profit), 0) as profit,
+    COUNT(DISTINCT o.id) as order_count
+    FROM sales_order_item oi
+    JOIN sales_order o ON oi.order_id = o.id
+    JOIN product p ON oi.product_id = p.id
+    LEFT JOIN category c ON p.category_id = c.id
+    WHERE o.is_void = 0 
+      AND o.created_at BETWEEN ? AND ?
+      AND p.category_id = ?
+    GROUP BY p.id
+    ORDER BY sales_amount DESC`;
+  
+  const result = db.prepare(sql).all(start + ' 00:00:00', end + ' 23:59:59', categoryId);
+  
+  const totalSales = result.reduce((sum, item) => sum + item.sales_amount, 0);
+  
+  return result.map(item => ({
+    ...item,
+    ratio: totalSales > 0 ? Number(((item.sales_amount / totalSales) * 100).toFixed(2)) : 0,
+    customer_price: item.order_count > 0 ? Number((item.sales_amount / item.order_count).toFixed(2)) : 0,
+    profit_rate: item.sales_amount > 0 ? Number(((item.profit / item.sales_amount) * 100).toFixed(2)) : 0
+  }));
+}
+
+function getProductDailyTrend(params = {}) {
+  const { startDate, endDate, productId } = params;
+  const today = dayjs().format('YYYY-MM-DD');
+  const defaultStart = dayjs().subtract(30, 'day').format('YYYY-MM-DD');
+  
+  const start = startDate || defaultStart;
+  const end = endDate || today;
+  
+  if (!productId) {
+    throw new Error('productId is required');
+  }
+  
+  const sql = `SELECT 
+    DATE(o.created_at) as date,
+    COALESCE(SUM(oi.subtotal), 0) as sales_amount,
+    COALESCE(SUM(oi.quantity), 0) as quantity,
+    COALESCE(SUM(oi.profit), 0) as profit,
+    COUNT(DISTINCT o.id) as order_count
+    FROM sales_order_item oi
+    JOIN sales_order o ON oi.order_id = o.id
+    WHERE o.is_void = 0 
+      AND o.created_at BETWEEN ? AND ?
+      AND oi.product_id = ?
+    GROUP BY DATE(o.created_at)
+    ORDER BY date ASC`;
+  
+  const rawData = db.prepare(sql).all(start + ' 00:00:00', end + ' 23:59:59', productId);
+  
+  const startDay = dayjs(start);
+  const endDay = dayjs(end);
+  const days = [];
+  let current = startDay;
+  while (current.isBefore(endDay) || current.isSame(endDay, 'day')) {
+    days.push(current.format('YYYY-MM-DD'));
+    current = current.add(1, 'day');
+  }
+  
+  const resultMap = {};
+  rawData.forEach(item => {
+    resultMap[item.date] = item;
+  });
+  
+  return days.map(date => {
+    const found = resultMap[date];
+    return {
+      date,
+      sales_amount: found ? found.sales_amount : 0,
+      quantity: found ? found.quantity : 0,
+      profit: found ? found.profit : 0,
+      order_count: found ? found.order_count : 0
+    };
+  });
+}
+
+function getCategoryDrillOverview(params = {}) {
+  const { startDate, endDate, categoryId, productId } = params;
+  const today = dayjs().format('YYYY-MM-DD');
+  const defaultStart = dayjs().subtract(30, 'day').format('YYYY-MM-DD');
+  
+  const start = startDate || defaultStart;
+  const end = endDate || today;
+  const startDateTime = start + ' 00:00:00';
+  const endDateTime = end + ' 23:59:59';
+  
+  let whereSql = 'WHERE o.is_void = 0 AND o.created_at BETWEEN ? AND ?';
+  const sqlParams = [startDateTime, endDateTime];
+  let extraJoins = '';
+  
+  if (categoryId) {
+    extraJoins += ' LEFT JOIN sales_order_item oi ON o.id = oi.order_id LEFT JOIN product p ON oi.product_id = p.id';
+    whereSql += ' AND p.category_id = ?';
+    sqlParams.push(categoryId);
+  }
+  
+  if (productId) {
+    if (!categoryId) {
+      extraJoins += ' LEFT JOIN sales_order_item oi ON o.id = oi.order_id';
+    }
+    whereSql += ' AND oi.product_id = ?';
+    sqlParams.push(productId);
+  }
+  
+  const sql = `SELECT 
+    COALESCE(SUM(o.actual_amount), 0) as total_sales,
+    COALESCE(SUM(o.total_cost), 0) as total_cost,
+    COALESCE(SUM(o.profit), 0) as total_profit,
+    COALESCE(AVG(o.profit_rate), 0) as profit_rate,
+    COUNT(DISTINCT o.id) as order_count,
+    COALESCE(SUM(o.item_count), 0) as item_count,
+    COUNT(DISTINCT o.customer_id) as customer_count
+    FROM sales_order o
+    ${extraJoins}
+    ${whereSql}`;
+  
+  const result = db.prepare(sql).get(...sqlParams);
+  
+  result.customer_price = calculateCustomerPrice(result.total_sales, result.order_count);
+  
+  const customerCountSql = `SELECT 
+    o.customer_id, COUNT(DISTINCT o.id) as count 
+    FROM sales_order o
+    ${extraJoins}
+    ${whereSql}
+    AND o.customer_id IS NOT NULL
+    GROUP BY o.customer_id`;
+  
+  const customerCounts = db.prepare(customerCountSql).all(...sqlParams);
+  result.repurchase_rate = calculateRepurchaseRate(customerCounts);
+  
+  result.drill_level = productId ? 'product' : categoryId ? 'category' : 'all';
+  result.category_id = categoryId || null;
+  result.product_id = productId || null;
+  
+  return result;
+}
+
+function exportCategoryAnalysis(params = {}) {
+  const { startDate, endDate, categoryId, productId } = params;
+  const today = dayjs().format('YYYY-MM-DD');
+  const defaultStart = dayjs().subtract(30, 'day').format('YYYY-MM-DD');
+  
+  const start = startDate || defaultStart;
+  const end = endDate || today;
+  
+  const XLSX = require('xlsx');
+  
+  const wb = XLSX.utils.book_new();
+  
+  const overview = getCategoryDrillOverview({ startDate: start, endDate: end, categoryId, productId });
+  
+  let drillPath = '全部';
+  if (categoryId) {
+    const category = db.prepare('SELECT name FROM category WHERE id = ?').get(categoryId);
+    drillPath = category ? category.name : '未知品类';
+    if (productId) {
+      const product = db.prepare('SELECT name FROM product WHERE id = ?').get(productId);
+      drillPath += ` > ${product ? product.name : '未知商品'}`;
+    }
+  }
+  
+  const summaryData = [
+    ['品类分析报表'],
+    ['生成时间', dayjs().format('YYYY-MM-DD HH:mm:ss')],
+    ['统计周期', `${start} 至 ${end}`],
+    ['下钻层级', drillPath],
+    [],
+    ['汇总指标'],
+    ['销售额', overview.total_sales],
+    ['毛利额', overview.total_profit],
+    ['毛利率', `${overview.profit_rate}%`],
+    ['客单价', overview.customer_price],
+    ['复购率', `${overview.repurchase_rate}%`],
+    ['订单数', overview.order_count],
+    ['商品数量', overview.item_count],
+    ['客户数', overview.customer_count]
+  ];
+  
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryData), '汇总');
+  
+  if (!categoryId) {
+    const categories = getSalesByCategory({ startDate: start, endDate: end });
+    const categoryHeaders = ['品类', '销售额', '毛利额', '毛利率(%)', '销量', '订单数', '占比(%)'];
+    const categoryRows = categories.map(c => [
+      c.category_name,
+      c.sales_amount,
+      c.profit,
+      c.sales_amount > 0 ? (((c.profit || 0) / c.sales_amount) * 100).toFixed(2) : 0,
+      c.quantity,
+      c.order_count,
+      c.ratio
+    ]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([categoryHeaders, ...categoryRows]), '品类汇总');
+  }
+  
+  if (categoryId && !productId) {
+    const categoryInfo = db.prepare('SELECT id, name FROM category WHERE id = ?').get(categoryId);
+    const products = getProductsByCategory({ startDate: start, endDate: end, categoryId });
+    const productHeaders = ['商品编码', '商品名称', '销售额', '销量', '毛利额', '毛利率(%)', '订单数', '客单价', '占比(%)'];
+    const productRows = products.map(p => [
+      p.sku,
+      p.product_name,
+      p.sales_amount,
+      p.quantity,
+      p.profit,
+      p.profit_rate,
+      p.order_count,
+      p.customer_price,
+      p.ratio
+    ]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([productHeaders, ...productRows]), `${categoryInfo?.name || '品类'}商品明细`);
+  }
+  
+  if (productId) {
+    const productInfo = db.prepare('SELECT id, sku, name FROM product WHERE id = ?').get(productId);
+    const trend = getProductDailyTrend({ startDate: start, endDate: end, productId });
+    const trendHeaders = ['日期', '销售额', '销量', '毛利额', '订单数'];
+    const trendRows = trend.map(t => [
+      t.date,
+      t.sales_amount,
+      t.quantity,
+      t.profit,
+      t.order_count
+    ]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([trendHeaders, ...trendRows]), `${productInfo?.name || '商品'}日销售趋势`);
+  }
+  
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
 module.exports = {
   calculateCustomerPrice,
   calculateProfitRate,
@@ -458,5 +711,9 @@ module.exports = {
   getSalesByCategory,
   getSalesByStaff,
   getSalesDetail,
-  getHourlySales
+  getHourlySales,
+  getProductsByCategory,
+  getProductDailyTrend,
+  getCategoryDrillOverview,
+  exportCategoryAnalysis
 };

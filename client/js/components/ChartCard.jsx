@@ -1,9 +1,10 @@
 const { Card, Spin, Tooltip, Button } = antd;
 const { useState, useEffect, useRef } = React;
 
-function ChartCard({ title, option, height = 320, loading = false, extra, onFullscreen }) {
+function ChartCard({ title, option, height = 320, loading = false, extra, onFullscreen, onEvents = {} }) {
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
+  const boundEvents = useRef({});
 
   useEffect(() => {
     if (chartRef.current && option) {
@@ -11,6 +12,19 @@ function ChartCard({ title, option, height = 320, loading = false, extra, onFull
         chartInstance.current = echarts.init(chartRef.current);
       }
       chartInstance.current.setOption(option, true);
+      
+      Object.keys(boundEvents.current).forEach(eventName => {
+        chartInstance.current.off(eventName, boundEvents.current[eventName]);
+      });
+      boundEvents.current = {};
+      
+      Object.keys(onEvents).forEach(eventName => {
+        const handler = onEvents[eventName];
+        if (typeof handler === 'function') {
+          boundEvents.current[eventName] = handler;
+          chartInstance.current.on(eventName, handler);
+        }
+      });
     }
 
     const handleResize = () => {
@@ -20,10 +34,14 @@ function ChartCard({ title, option, height = 320, loading = false, extra, onFull
     window.addEventListener('resize', handleResize);
     return () => {
       window.removeEventListener('resize', handleResize);
+      Object.keys(boundEvents.current).forEach(eventName => {
+        chartInstance.current?.off(eventName, boundEvents.current[eventName]);
+      });
       chartInstance.current?.dispose();
       chartInstance.current = null;
+      boundEvents.current = {};
     };
-  }, [option]);
+  }, [option, onEvents]);
 
   const handleFullscreen = () => {
     if (onFullscreen) {

@@ -55,7 +55,13 @@ const api = {
     getByCategory: (params) => request('/sales/by-category', { params }),
     getByStaff: (params) => request('/sales/by-staff', { params }),
     getDetail: (params) => request('/sales/detail', { params }),
-    getHourly: (params) => request('/sales/hourly', { params })
+    getHourly: (params) => request('/sales/hourly', { params }),
+    getProductsByCategory: (params) => request('/sales/category/products', { params }),
+    getProductDailyTrend: (params) => request('/sales/product/trend', { params }),
+    getCategoryDrillOverview: (params) => request('/sales/category/drill-overview', { params }),
+    exportCategoryAnalysis: (data) => {
+      return axios.post(`${API_BASE}/sales/category/export`, data, { responseType: 'blob' });
+    }
   },
   
   inventory: {

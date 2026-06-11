@@ -78,6 +78,67 @@ const salesController = {
     } catch (err) {
       next(err);
     }
+  },
+
+  async getProductsByCategory(req, res, next) {
+    try {
+      const { startDate, endDate, categoryId } = req.query;
+      const data = salesService.getProductsByCategory({ 
+        startDate, 
+        endDate, 
+        categoryId: parseInt(categoryId) 
+      });
+      res.success(data, '获取品类商品明细成功');
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async getProductDailyTrend(req, res, next) {
+    try {
+      const { startDate, endDate, productId } = req.query;
+      const data = salesService.getProductDailyTrend({ 
+        startDate, 
+        endDate, 
+        productId: parseInt(productId) 
+      });
+      res.success(data, '获取商品日销售趋势成功');
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async getCategoryDrillOverview(req, res, next) {
+    try {
+      const { startDate, endDate, categoryId, productId } = req.query;
+      const data = salesService.getCategoryDrillOverview({ 
+        startDate, 
+        endDate, 
+        categoryId: categoryId ? parseInt(categoryId) : undefined,
+        productId: productId ? parseInt(productId) : undefined
+      });
+      res.success(data, '获取下钻概览成功');
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async exportCategoryAnalysis(req, res, next) {
+    try {
+      const { startDate, endDate, categoryId, productId } = req.body;
+      const buffer = salesService.exportCategoryAnalysis({ 
+        startDate, 
+        endDate, 
+        categoryId: categoryId ? parseInt(categoryId) : undefined,
+        productId: productId ? parseInt(productId) : undefined
+      });
+      
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="category_analysis_${Date.now()}.xlsx"`);
+      res.send(buffer);
+    } catch (err) {
+      next(err);
+    }
   }
 };
 
