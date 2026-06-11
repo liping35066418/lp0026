@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>零售门店数据统计分析平台</title>
+  <link rel="stylesheet" href="./lib/reset.css">
+  <link rel="stylesheet" href="./css/app.css">
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="./lib/dayjs.min.js"></script>
+  <script src="./lib/react.production.min.js"></script>
+  <script src="./lib/react-dom.production.min.js"></script>
+  <script src="./lib/antd.min.js"></script>
+  <script src="./lib/echarts.min.js"></script>
+  <script src="./lib/axios.min.js"></script>
+  <script src="./lib/babel.min.js"></script>
+
+  <script>
+    if (window.dayjs && typeof window.dayjs.locale === 'function') {
+      window.dayjs.locale('zh-cn');
+    }
+  </script>
+
+  <script type="text/babel" data-presets="env,react" src="./js/utils/dateUtils.js"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/utils/chartConfig.js"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/utils/api.js"></script>
+
+  <script type="text/babel" data-presets="env,react" src="./js/components/StatCard.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/components/ChartCard.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/components/DateRangeFilter.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/components/Pagination.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/components/StatusTag.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/components/FlowTypeTag.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/components/DataTable.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/components/AlertList.jsx"></script>
+
+  <script type="text/babel" data-presets="env,react" src="./js/pages/Dashboard.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/pages/SalesAnalysis.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/pages/Inventory.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/pages/Purchase.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/pages/Stocktake.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/pages/ReportCenter.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="./js/pages/SystemConfig.jsx"></script>
+
+  <script type="text/babel" data-presets="env,react" src="./js/app.jsx"></script>
+</body>
+</html>
