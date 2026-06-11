@@ -256,10 +256,21 @@ function recalculateInventoryCost(productId) {
       totalQty += flow.quantity;
     } else {
       const avgCost = totalQty > 0 ? totalCost / totalQty : 0;
-      totalQty += flow.quantity;
-      totalCost = avgCost * totalQty;
+      const newQty = totalQty + flow.quantity;
+      if (newQty < 0) {
+        totalQty = 0;
+        totalCost = 0;
+      } else {
+        totalQty = newQty;
+        totalCost = avgCost * totalQty;
+      }
     }
   });
+  
+  if (totalQty < 0) {
+    totalQty = 0;
+    totalCost = 0;
+  }
   
   const avgCost = totalQty > 0 ? Number((totalCost / totalQty).toFixed(2)) : 0;
   
@@ -346,6 +357,23 @@ function redOffsetFlow(flowId, operatorId, operatorName) {
   return recalculateInventoryCost(flow.product_id);
 }
 
+function recalculateAllInventory() {
+  const products = db.prepare('SELECT id FROM inventory ORDER BY id').all();
+  
+  const results = [];
+  products.forEach(p => {
+    const result = recalculateInventoryCost(p.id);
+    results.push({ productId: p.id, ...result });
+  });
+  
+  checkAllInventoryAlerts();
+  
+  return {
+    total: results.length,
+    results
+  };
+}
+
 module.exports = {
   calculateAvgCost,
   getAlertStatus,
@@ -354,6 +382,7 @@ module.exports = {
   getInventoryList,
   getInventoryFlow,
   recalculateInventoryCost,
+  recalculateAllInventory,
   checkAllInventoryAlerts,
   redOffsetFlow,
   generateFlowNo

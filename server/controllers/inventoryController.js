@@ -40,7 +40,12 @@ const inventoryController = {
   async calculateInventory(req, res, next) {
     try {
       const { productId } = req.body;
-      const data = inventoryService.recalculateInventoryCost(parseInt(productId));
+      let data;
+      if (productId) {
+        data = inventoryService.recalculateInventoryCost(parseInt(productId));
+      } else {
+        data = inventoryService.recalculateAllInventory();
+      }
       res.success(data, '库存成本重算成功');
     } catch (err) {
       next(err);

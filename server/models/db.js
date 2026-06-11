@@ -302,7 +302,7 @@ function initData() {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     
     for (let i = 1; i <= 15; i++) {
-      const qty = Math.floor(Math.random() * 100) + 10;
+      const qty = Math.floor(Math.random() * 500) + 500;
       const cost = products[i-1][6];
       insertInventory.run(
         i, products[i-1][0], qty, qty, cost, qty * cost,
@@ -325,7 +325,13 @@ function initData() {
       ['C001', '会员甲', '13900139001', 'gold', 5680.50, 28, '2026-06-10 14:30:00'],
       ['C002', '会员乙', '13900139002', 'silver', 2350.00, 15, '2026-06-09 16:20:00'],
       ['C003', '会员丙', '13900139003', 'normal', 890.50, 8, '2026-06-08 11:15:00'],
-      ['C004', '会员丁', '13900139004', 'normal', 320.00, 3, '2026-06-05 09:40:00']
+      ['C004', '会员丁', '13900139004', 'normal', 320.00, 3, '2026-06-05 09:40:00'],
+      ['C005', '会员戊', '13900139005', 'normal', 150.00, 2, '2026-06-07 15:20:00'],
+      ['C006', '会员己', '13900139006', 'normal', 68.00, 1, '2026-06-06 10:30:00'],
+      ['C007', '会员庚', '13900139007', 'silver', 1280.00, 6, '2026-06-09 11:45:00'],
+      ['C008', '会员辛', '13900139008', 'normal', 45.00, 1, '2026-06-04 16:00:00'],
+      ['C009', '会员壬', '13900139009', 'gold', 3560.00, 18, '2026-06-10 09:15:00'],
+      ['C010', '会员癸', '13900139010', 'normal', 89.00, 1, '2026-06-03 14:30:00']
     ].forEach(c => insertCustomer.run(...c));
 
     const insertSupplier = db.prepare('INSERT INTO supplier (supplier_no, name, contact, phone, address) VALUES (?, ?, ?, ?, ?)');
@@ -380,6 +386,19 @@ function generateSalesHistory() {
   let flowCounter = 0;
   let orderCounter = 0;
   
+  const customerOrderCounts = {};
+  const maxOrdersPerCustomer = {};
+  for (let cid = 1; cid <= 10; cid++) {
+    if (cid <= 3) {
+      maxOrdersPerCustomer[cid] = 15 + Math.floor(Math.random() * 10);
+    } else if (cid <= 5) {
+      maxOrdersPerCustomer[cid] = 3 + Math.floor(Math.random() * 5);
+    } else {
+      maxOrdersPerCustomer[cid] = Math.random() > 0.5 ? 1 : 2;
+    }
+    customerOrderCounts[cid] = 0;
+  }
+  
   for (let day = 0; day < 30; day++) {
     const date = new Date(2026, 5, 11 - day);
     const orderCount = Math.floor(Math.random() * 30) + 10;
@@ -393,7 +412,21 @@ function generateSalesHistory() {
       createdAt.setHours(hour, minute, 0, 0);
       
       const itemCount = Math.floor(Math.random() * 5) + 1;
-      const customerId = Math.random() > 0.6 ? Math.floor(Math.random() * 4) + 1 : null;
+      
+      let customerId = null;
+      if (Math.random() > 0.5) {
+        const availableCustomers = [];
+        for (let cid = 1; cid <= 10; cid++) {
+          if (customerOrderCounts[cid] < maxOrdersPerCustomer[cid]) {
+            availableCustomers.push(cid);
+          }
+        }
+        if (availableCustomers.length > 0) {
+          customerId = availableCustomers[Math.floor(Math.random() * availableCustomers.length)];
+          customerOrderCounts[customerId]++;
+        }
+      }
+      
       const staffId = staffIds[Math.floor(Math.random() * staffIds.length)];
       
       let totalAmount = 0;
@@ -403,7 +436,13 @@ function generateSalesHistory() {
       for (let i = 0; i < itemCount; i++) {
         const productId = Math.floor(Math.random() * 15) + 1;
         const product = db.prepare('SELECT * FROM product WHERE id = ?').get(productId);
-        const qty = Math.floor(Math.random() * 3) + 1;
+        const inv = getInventory.get(productId);
+        
+        if (!inv || inv.quantity <= 0) continue;
+        
+        const maxQty = Math.min(Math.floor(Math.random() * 3) + 1, inv.quantity);
+        const qty = Math.max(1, Math.floor(Math.random() * maxQty) + 1);
+        
         const subtotal = qty * product.sale_price;
         const cost = qty * product.cost_price;
         const profit = subtotal - cost;
@@ -423,6 +462,12 @@ function generateSalesHistory() {
         totalCost += cost;
       }
       
+      if (items.length === 0) {
+        orderCounter--;
+        if (customerId) customerOrderCounts[customerId]--;
+        continue;
+      }
+      
       const discount = Math.random() > 0.7 ? parseFloat((totalAmount * Math.random() * 0.1).toFixed(2)) : 0;
       const actualAmount = totalAmount - discount;
       const profit = actualAmount - totalCost;
@@ -430,35 +475,35 @@ function generateSalesHistory() {
       
       const orderId = insertOrder.run(
         orderNo, customerId, staffId, totalAmount, discount, actualAmount,
-        totalCost, profit, profitRate, itemCount, 
+        totalCost, profit, profitRate, items.length, 
         payTypes[Math.floor(Math.random() * payTypes.length)],
         createdAt.toISOString().slice(0, 19).replace('T', ' ')
       ).lastInsertRowid;
       
       items.forEach(item => {
+        const inv = getInventory.get(item.productId);
+        if (!inv || inv.quantity < item.qty) return;
+        
         insertItem.run(
           orderId, orderNo, item.productId, item.sku, item.name,
           item.qty, item.price, item.cost, item.subtotal, item.profit
         );
         
-        const inv = getInventory.get(item.productId);
-        if (inv) {
-          flowCounter++;
-          const flowNo = `IF${Date.now().toString().slice(-8)}${String(flowCounter).padStart(8, '0')}`;
-          updateInventoryFlow.run(
-            flowNo, 'sales_out', orderNo, item.productId, item.sku, item.qty,
-            inv.quantity, inv.quantity - item.qty, item.cost,
-            staffId, '收银员', '销售出库'
-          );
-          updateInventory.run(
-            item.qty, item.qty, 
-            createdAt.toISOString().slice(0, 19).replace('T', ' '),
-            createdAt.toISOString().slice(0, 19).replace('T', ' '),
-            item.qty,
-            new Date().toISOString().slice(0, 19).replace('T', ' '),
-            item.productId
-          );
-        }
+        flowCounter++;
+        const flowNo = `IF${Date.now().toString().slice(-8)}${String(flowCounter).padStart(8, '0')}`;
+        updateInventoryFlow.run(
+          flowNo, 'sales_out', orderNo, item.productId, item.sku, item.qty,
+          inv.quantity, inv.quantity - item.qty, item.cost,
+          staffId, '收银员', '销售出库'
+        );
+        updateInventory.run(
+          item.qty, item.qty, 
+          createdAt.toISOString().slice(0, 19).replace('T', ' '),
+          createdAt.toISOString().slice(0, 19).replace('T', ' '),
+          item.qty,
+          new Date().toISOString().slice(0, 19).replace('T', ' '),
+          item.productId
+        );
       });
     }
   }

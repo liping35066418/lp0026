@@ -70,9 +70,11 @@ function getSalesAnalysis(params) {
   
   let whereSql = 'WHERE o.is_void = 0 AND o.created_at BETWEEN ? AND ?';
   const sqlParams = [startDateTime, endDateTime];
+  let extraJoins = '';
   
   if (filters.categoryIds && filters.categoryIds.length > 0) {
-    whereSql += ` AND p.category_id IN (${filters.categoryIds.map(() => '?').join(',')})`;
+    extraJoins += ' LEFT JOIN sales_order_item oi_filter ON o.id = oi_filter.order_id LEFT JOIN product p_filter ON oi_filter.product_id = p_filter.id';
+    whereSql += ` AND p_filter.category_id IN (${filters.categoryIds.map(() => '?').join(',')})`;
     sqlParams.push(...filters.categoryIds);
   }
   
@@ -98,21 +100,21 @@ function getSalesAnalysis(params) {
       label: '品类',
       join: 'LEFT JOIN product p ON oi.product_id = p.id LEFT JOIN category cat ON p.category_id = cat.id',
       groupBy: 'p.category_id',
-      orderBy: 'total_sales DESC'
+      orderBy: 'sales_amount DESC'
     },
     staff: {
       select: `o.staff_id as dimension_value, s.name as dimension_label`,
       label: '店员',
       join: 'LEFT JOIN staff s ON o.staff_id = s.id',
       groupBy: 'o.staff_id',
-      orderBy: 'total_sales DESC'
+      orderBy: 'sales_amount DESC'
     },
     customer: {
       select: `o.customer_id as dimension_value, c.name as dimension_label`,
       label: '客户',
       join: 'LEFT JOIN customer c ON o.customer_id = c.id',
       groupBy: 'o.customer_id',
-      orderBy: 'total_sales DESC'
+      orderBy: 'sales_amount DESC'
     }
   };
   
@@ -132,6 +134,7 @@ function getSalesAnalysis(params) {
     FROM sales_order o
     LEFT JOIN sales_order_item oi ON o.id = oi.order_id
     LEFT JOIN customer c ON o.customer_id = c.id
+    ${extraJoins}
     ${whereSql}`;
   
   const allOrders = db.prepare(baseSql).all(...sqlParams);
@@ -153,12 +156,27 @@ function getSalesAnalysis(params) {
   summary.totalOrderCount = uniqueOrders.length;
   summary.avgCustomerPrice = calculateCustomerPrice(summary.totalSalesAmount, summary.totalOrderCount);
   
-  const customerCounts = {};
+  const filteredCustomerIds = new Set();
   uniqueOrders.forEach(o => {
     if (o.customer_id) {
+      filteredCustomerIds.add(o.customer_id);
+    }
+  });
+  
+  const allPeriodOrdersSql = `SELECT 
+    o.id, o.customer_id
+    FROM sales_order o
+    WHERE o.is_void = 0 AND o.created_at BETWEEN ? AND ?`;
+  
+  const allPeriodOrders = db.prepare(allPeriodOrdersSql).all(startDateTime, endDateTime);
+  
+  const customerCounts = {};
+  allPeriodOrders.forEach(o => {
+    if (o.customer_id && filteredCustomerIds.has(o.customer_id)) {
       customerCounts[o.customer_id] = (customerCounts[o.customer_id] || 0) + 1;
     }
   });
+  
   summary.overallRepurchaseRate = calculateRepurchaseRate(
     Object.entries(customerCounts).map(([id, count]) => ({ customer_id: id, count }))
   );
@@ -182,29 +200,45 @@ function getSalesAnalysis(params) {
       LEFT JOIN sales_order_item oi ON o.id = oi.order_id
       LEFT JOIN customer c ON o.customer_id = c.id
       ${dimJoin}
+      ${extraJoins}
       ${whereSql}
       GROUP BY ${config.groupBy}
       ORDER BY ${config.orderBy}`;
     
     const rawData = db.prepare(dimSql).all(...dimSqlParams);
     
-    const customerCountSql = `SELECT 
+    const dimCustomerSql = `SELECT 
       ${config.select},
-      o.customer_id,
-      COUNT(DISTINCT o.id) as purchase_count
+      o.customer_id
       FROM sales_order o
       LEFT JOIN sales_order_item oi ON o.id = oi.order_id
       LEFT JOIN customer c ON o.customer_id = c.id
       ${dimJoin}
+      ${extraJoins}
       ${whereSql} AND o.customer_id IS NOT NULL
       GROUP BY ${config.groupBy}, o.customer_id`;
     
-    const customerCountData = db.prepare(customerCountSql).all(...dimSqlParams);
-    const dimCustomerCounts = {};
-    customerCountData.forEach(d => {
+    const dimCustomerData = db.prepare(dimCustomerSql).all(...dimSqlParams);
+    const dimFilteredCustomers = {};
+    dimCustomerData.forEach(d => {
       const key = d.dimension_value;
-      if (!dimCustomerCounts[key]) dimCustomerCounts[key] = [];
-      dimCustomerCounts[key].push({ count: d.purchase_count });
+      if (!dimFilteredCustomers[key]) dimFilteredCustomers[key] = new Set();
+      dimFilteredCustomers[key].add(d.customer_id);
+    });
+    
+    const dimCustomerCounts = {};
+    Object.keys(dimFilteredCustomers).forEach(key => {
+      dimCustomerCounts[key] = [];
+      const customerIds = dimFilteredCustomers[key];
+      const periodCounts = {};
+      allPeriodOrders.forEach(o => {
+        if (o.customer_id && customerIds.has(o.customer_id)) {
+          periodCounts[o.customer_id] = (periodCounts[o.customer_id] || 0) + 1;
+        }
+      });
+      Object.values(periodCounts).forEach(count => {
+        dimCustomerCounts[key].push({ count });
+      });
     });
     
     results[dim] = rawData.map(d => {
